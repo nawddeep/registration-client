@@ -100,6 +100,23 @@ echo '{"schemaVersion":1,"configVersion":"demo-1","policies":{"resident":{"enabl
 A bad config (unknown key, out-of-range value, wrong digest) is rejected: the previous valid config stays and `REG-LIV-005`
 records it. With nothing synced, the last valid config in `<user.dir>/.liveness/config` is used, then the bundled default.
 
+### Demo config (all three workflows)
+
+`demo-global-param.json` is the signed value that turns liveness on for `resident`, `operator` and `supervisor`
+(2 challenges for the resident, defaults elsewhere). It is 273 of 512 characters and was produced with the signer
+(exit code 0), which validates it with the client's own parser:
+
+```sh
+echo '{"schemaVersion":1,"configVersion":"demo-1","policies":{"resident":{"enabled":true,"challengeCount":2},"operator":{"enabled":true},"supervisor":{"enabled":true}}}' \
+ | java -cp registration-liveness-core.jar:gson-2.10.1.jar:<dir with SignLivenessConfig.class> SignLivenessConfig
+```
+
+To use it, set the content of the file, unchanged, as the value of the global parameter
+`mosip.registration.face.liveness.config` (in a MOSIP environment this is a property of the registration config
+served by the config server, which the client copies into `REG.GLOBAL_PARAM` on sync). If the value is edited
+by hand the digest no longer matches and the client rejects it (`REG-LIV-005`). The sync path itself was **not**
+run here; only the value, its length and its validation were checked.
+
 ## Audit
 
 Rows go to **`AUDIT.APP_AUDIT_LOG`** in the client's embedded Derby, through `AuditManagerService`. Notes for reading the table:
