@@ -44,6 +44,8 @@ import io.mosip.registration.mdm.dto.MdmBioDevice;
 import io.mosip.registration.mdm.service.impl.MosipDeviceSpecificationFactory;
 import io.mosip.registration.service.BaseService;
 import io.mosip.registration.service.bio.BioService;
+import io.mosip.registration.controller.liveness.FaceLivenessController;
+import io.mosip.registration.livenessmanager.model.Workflow;
 import io.mosip.registration.util.control.FxControl;
 import io.mosip.registration.util.control.impl.BiometricFxControl;
 import javafx.concurrent.Service;
@@ -154,6 +156,9 @@ public class GenericBiometricsController extends BaseController {
 
 	@Autowired
 	private Streamer streamer;
+
+	@Autowired
+	private FaceLivenessController faceLivenessController;
 
 	@FXML
 	private Label registrationNavlabel;
@@ -431,6 +436,15 @@ public class GenericBiometricsController extends BaseController {
 		auditFactory.audit(getAuditEventForScan(currentModality.name()), Components.REG_BIOMETRICS, SessionContext.userId(),
 				AuditReferenceIdTypes.USER_ID.getReferenceTypeId());
 
+		// Face liveness (resident): run the check first. Exception photos are not gated. The single-use pass is
+		// taken right before the capture starts (see deviceSearchTask below).
+		if (isFace(currentModality) && !faceLivenessController.ensurePass(Workflow.RESIDENT)) {
+			// No pass: the gate audits REG-LIV-006 and the capture does not start.
+			faceLivenessController.consumePass(Workflow.RESIDENT, fxControl.getUiSchemaDTO().getId());
+			generateAlert(RegistrationConstants.ERROR, faceLivenessController.requiredMessage());
+			return;
+		}
+
 		disableEnableBiometricPane(true);
 
 		deviceSearchTask = new Service<MdmBioDevice>() {
@@ -486,6 +500,17 @@ public class GenericBiometricsController extends BaseController {
 						deviceSpecificationFactory.initializeDeviceMap(true);
 						streamer.setUrlStream(null);
 						generateAlert(RegistrationConstants.ERROR, RegistrationUIConstants.getMessageLanguageSpecific(RegistrationUIConstants.STREAMING_ERROR));
+						return;
+					}
+					// Face liveness (resident): the capture only starts with a fresh single-use pass. This is
+					// the Java-side gate; it does not depend on what the UI shows.
+					if (isFace(currentModality) && !faceLivenessController.consumePass(Workflow.RESIDENT,
+							fxControl.getUiSchemaDTO().getId())) {
+						urlStream.close();
+						streamer.setUrlStream(null);
+						SessionContext.setAutoLogout(true);
+						generateAlert(RegistrationConstants.ERROR, faceLivenessController.requiredMessage());
+						disableEnableBiometricPane(false);
 						return;
 					}
 					rCaptureTaskService();
