@@ -184,47 +184,8 @@ public class FaceLivenessController {
 	// ---- screen ---------------------------------------------------------------------------------------------
 
 	private boolean show(Workflow workflow) {
-		this.workflow = workflow;
-		this.passed = false;
-		this.counter = new ChallengeCounter();
-		this.challengeTotal = 0;
-		this.lastSeconds = null;
-		this.shownIcon = null;
 		try {
-			Parent rootNode = BaseController.load(getClass().getResource(FXML));
-			Rectangle2D bounds = Screen.getPrimary().getVisualBounds();
-			double height = Math.min(760, bounds.getHeight() - 60);
-			double width = Math.min(880, bounds.getWidth() - 60);
-			double ovalWidth = Math.max(180, Math.min(300, (height - 340) / 1.3 - 24));
-
-			oval = new LivenessOvalView(ovalWidth);
-			ovalHolder.getChildren().setAll(oval);
-			if (resources != null && "ar".equals(resources.getLocale().getLanguage())) {
-				content.setNodeOrientation(NodeOrientation.RIGHT_TO_LEFT);
-			}
-			recoveryPanel.setVisible(false);
-
-			Scene scene = new Scene(rootNode, width, height, Color.web("#0B0B0C"));
-			scene.getStylesheets().add(getClass().getResource(CSS).toExternalForm());
-			stage = new Stage(StageStyle.UNDECORATED);
-			stage.initModality(Modality.APPLICATION_MODAL);
-			Window owner = focusedWindow();
-			if (owner != null) {
-				stage.initOwner(owner);
-			}
-			stage.setResizable(false);
-			stage.setScene(scene);
-			stage.setOnHidden(e -> {
-				// Closing without Continue withdraws any pass and releases the SBI stream.
-				if (!passed) {
-					service.cancel();
-				}
-				oval.stop();
-			});
-
-			captionLabel.setText(t("liveness_caption"));
-			workflowLabel.setText(t(DesktopLivenessUiModel.workflowKey(workflow)));
-			render(DesktopLivenessUiModel.intro(service.getMaxAttempts(workflow)));
+			prepare(workflow);
 			stage.showAndWait();
 			return passed;
 		} catch (IOException | RuntimeException e) {
@@ -232,6 +193,62 @@ public class FaceLivenessController {
 			service.cancel();
 			return false;
 		}
+	}
+
+	/** Loads the FXML. A seam for the screenshot tool, which runs without the Spring context. */
+	Parent loadRoot() throws IOException {
+		return BaseController.load(getClass().getResource(FXML));
+	}
+
+	/** Builds the window without showing it (also used by the screenshot tool). */
+	Stage prepare(Workflow workflow) throws IOException {
+		this.workflow = workflow;
+		this.passed = false;
+		this.counter = new ChallengeCounter();
+		this.challengeTotal = 0;
+		this.lastSeconds = null;
+		this.shownIcon = null;
+		Parent rootNode = loadRoot();
+		Rectangle2D bounds = Screen.getPrimary().getVisualBounds();
+		double height = Math.min(760, bounds.getHeight() - 60);
+		double width = Math.min(880, bounds.getWidth() - 60);
+		double ovalWidth = Math.max(180, Math.min(300, (height - 340) / 1.3 - 24));
+
+		oval = new LivenessOvalView(ovalWidth);
+		ovalHolder.getChildren().setAll(oval);
+		if (resources != null && "ar".equals(resources.getLocale().getLanguage())) {
+			content.setNodeOrientation(NodeOrientation.RIGHT_TO_LEFT);
+			backButton.setText("\u2192"); // "back" points right when the layout is mirrored
+		}
+		recoveryPanel.setVisible(false);
+
+		Scene scene = new Scene(rootNode, width, height, Color.web("#0B0B0C"));
+		scene.getStylesheets().add(getClass().getResource(CSS).toExternalForm());
+		stage = new Stage(StageStyle.UNDECORATED);
+		stage.initModality(Modality.APPLICATION_MODAL);
+		Window owner = focusedWindow();
+		if (owner != null) {
+			stage.initOwner(owner);
+		}
+		stage.setResizable(false);
+		stage.setScene(scene);
+		stage.setOnHidden(e -> {
+			// Closing without Continue withdraws any pass and releases the SBI stream.
+			if (!passed) {
+				service.cancel();
+			}
+			oval.stop();
+		});
+
+		captionLabel.setText(t("liveness_caption"));
+		workflowLabel.setText(t(DesktopLivenessUiModel.workflowKey(workflow)));
+		render(DesktopLivenessUiModel.intro(service.getMaxAttempts(workflow)));
+		return stage;
+	}
+
+	/** The oval, for the screenshot tool. */
+	LivenessOvalView ovalView() {
+		return oval;
 	}
 
 	private static Window focusedWindow() {
@@ -313,7 +330,7 @@ public class FaceLivenessController {
 		sublineLabel.setText("");
 	}
 
-	private void render(View v) {
+	void render(View v) {
 		headlineLabel.setText(t(v.headlineKey, v.headlineArgs));
 		boolean hasSub = v.sublineKey != null;
 		sublineLabel.setText(hasSub ? t(v.sublineKey) : "");
@@ -353,7 +370,7 @@ public class FaceLivenessController {
 	}
 
 	/** Drains the ring between the once-per-second updates of the engine. */
-	private void updateTimer(LivenessEvent e) {
+	void updateTimer(LivenessEvent e) {
 		Integer secs = e.getSecondsRemaining();
 		if (secs == null) {
 			return;
