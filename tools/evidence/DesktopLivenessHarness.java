@@ -18,6 +18,20 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
+import org.apache.http.Consts;
+import org.apache.http.client.methods.CloseableHttpResponse;
+import org.apache.http.client.methods.HttpUriRequest;
+import org.apache.http.client.methods.RequestBuilder;
+import org.apache.http.entity.ContentType;
+import org.apache.http.entity.StringEntity;
+import org.apache.http.impl.client.CloseableHttpClient;
+import org.apache.http.impl.client.HttpClients;
+
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+
 import io.mosip.registration.liveness.DesktopLivenessRuntime;
 import io.mosip.registration.liveness.DesktopLivenessService;
 import io.mosip.registration.liveness.SbiStreamTap;
@@ -44,7 +58,7 @@ import io.mosip.registration.livenessmanager.model.Workflow;
  * engine are discarded except the timing keys of PERFORMANCE records.
  *
  * <pre>
- *   java -cp ... DesktopLivenessHarness (--url http://127.0.0.1:8081/ | --file clip.mjpeg [--fps 15] [--loop])
+ *   java -cp ... DesktopLivenessHarness (--url http://127.0.0.1:8081/ | --file clip.mjpeg [--fps 15] [--loop] | --mds-port 4501)
  *                                       [--workflow RESIDENT|OPERATOR|SUPERVISOR] [--config signed.json]
  *                                       [--no-retry] [--timeout-seconds 120]
  * </pre>
@@ -152,46 +166,165 @@ public final class DesktopLivenessHarness {
 		}
 	}
 
+	/** Where the MJPEG bytes come from: a file, a plain URL, or an MDS STREAM request. */
+	interface Source {
+		InputStream open() throws IOException;
+
+		String name();
+	}
+
+	static Source fileSource(File file) {
+		return new Source() {
+			@Override
+			public InputStream open() throws IOException {
+				return new FileInputStream(file);
+			}
+
+			@Override
+			public String name() {
+				return "recorded file";
+			}
+		};
+	}
+
+	static Source urlSource(String url) {
+		return new Source() {
+			@Override
+			public InputStream open() throws IOException {
+				return new URL(url).openStream();
+			}
+
+			@Override
+			public String name() {
+				return "live url";
+			}
+		};
+	}
+
+	/**
+	 * An SBI device service on 127.0.0.1:port, reached the way the Desktop client does it: {@code MOSIPDINFO} on
+	 * {@code /info} to find the Face device, then the {@code STREAM} request. The request is copied from
+	 * {@code MosipDeviceSpecification_095_ProviderImpl.stream} (spec 0.9.x: deviceId, deviceSubId, timeout, sent to
+	 * callbackId + "stream") and {@code MosipDeviceSpecification_SBI_1_0_ProviderImpl.stream} (spec 1.x: serialNo,
+	 * deviceSubId, timeout, dimensions, sent to /stream).
+	 */
+	static final class MdsSource implements Source {
+		private final int port;
+		private final String timeoutMs;
+		private CloseableHttpClient client;
+
+		MdsSource(int port, String timeoutMs) {
+			this.port = port;
+			this.timeoutMs = timeoutMs;
+		}
+
+		@Override
+		public String name() {
+			return "SBI device service on port " + port + " (STREAM)";
+		}
+
+		private static JsonObject jwtPayload(String jwt) {
+			String[] parts = jwt.split("\\.");
+			String seg = parts.length == 3 ? parts[1] : parts[0];
+			return JsonParser.parseString(new String(java.util.Base64.getUrlDecoder().decode(seg), StandardCharsets.UTF_8))
+					.getAsJsonObject();
+		}
+
+		@Override
+		public InputStream open() throws IOException {
+			client = HttpClients.createDefault();
+			HttpUriRequest info = RequestBuilder.create("MOSIPDINFO").setUri("http://127.0.0.1:" + port + "/info").build();
+			String infoBody;
+			try (CloseableHttpResponse r = client.execute(info)) {
+				infoBody = org.apache.http.util.EntityUtils.toString(r.getEntity());
+			}
+			JsonArray devices = JsonParser.parseString(infoBody).getAsJsonArray();
+			for (JsonElement e : devices) {
+				JsonObject deviceInfo = jwtPayload(e.getAsJsonObject().get("deviceInfo").getAsString());
+				JsonObject digital = jwtPayload(deviceInfo.get("digitalId").getAsString());
+				if (!"Face".equalsIgnoreCase(digital.get("type").getAsString())) {
+					continue;
+				}
+				String spec = deviceInfo.getAsJsonArray("specVersion").get(0).getAsString();
+				String request;
+				String url;
+				if (spec.startsWith("1.")) {
+					JsonObject body = new JsonObject();
+					body.addProperty("serialNo", digital.get("serialNo").getAsString());
+					body.addProperty("deviceSubId", "0");
+					body.addProperty("timeout", timeoutMs);
+					request = body.toString();
+					url = "http://127.0.0.1:" + port + "/stream";
+				} else {
+					JsonObject body = new JsonObject();
+					body.addProperty("deviceId", deviceInfo.get("deviceId").getAsString());
+					body.addProperty("deviceSubId", "0");
+					body.addProperty("timeout", timeoutMs);
+					request = body.toString();
+					url = deviceInfo.get("callbackId").getAsString() + "stream";
+				}
+				// exactly the entity and method the client uses
+				StringEntity entity = new StringEntity(request, ContentType.create("Content-Type", Consts.UTF_8));
+				HttpUriRequest stream = RequestBuilder.create("STREAM").setUri(url).setEntity(entity).build();
+				CloseableHttpResponse response = client.execute(stream);
+				if (response.getEntity() == null) {
+					throw new IOException("STREAM returned no entity");
+				}
+				return response.getEntity().getContent();
+			}
+			throw new IOException("no Face device in the MOSIPDINFO answer");
+		}
+	}
+
 	/** The tap: a daemon thread reads the MJPEG source and hands each JPEG to the frame source. */
 	static final class MjpegTap implements SbiStreamTap {
-		private final String url;
-		private final File file;
-		private final double fps;
+		private final Source source;
+		private final double fps; // > 0: pace a recorded file; 0: the source paces itself
 		private final boolean loop;
 		private final AtomicBoolean running = new AtomicBoolean();
 		private volatile Thread pump;
+		private volatile InputStream current;
 		volatile long framesRead;
 
-		MjpegTap(String url, File file, double fps, boolean loop) {
-			this.url = url;
-			this.file = file;
+		MjpegTap(Source source, double fps, boolean loop) {
+			this.source = source;
 			this.fps = fps;
 			this.loop = loop;
 		}
 
 		@Override
 		public void attach(Consumer<byte[]> jpegListener) throws FaceCaptureDevice.DeviceException {
+			final InputStream first;
 			try {
-				openStream().close(); // fail fast, as a missing device would
+				first = source.open(); // fail fast, as a missing device would
 			} catch (IOException e) {
 				throw new FaceCaptureDevice.DeviceException("cannot open the MJPEG source", true, e);
 			}
 			running.set(true);
+			current = first;
 			pump = new Thread(() -> {
+				InputStream raw = first;
 				try {
-					do {
-						try (InputStream raw = openStream()) {
+					while (true) {
+						try {
 							MjpegReader reader = new MjpegReader(raw);
 							byte[] jpeg;
 							while (running.get() && (jpeg = reader.next()) != null) {
 								framesRead++;
 								jpegListener.accept(jpeg);
-								if (file != null) {
-									Thread.sleep((long) (1000.0 / fps)); // a file is not paced by a camera
+								if (fps > 0) {
+									Thread.sleep((long) (1000.0 / fps));
 								}
 							}
+						} finally {
+							raw.close();
 						}
-					} while (running.get() && file != null && loop);
+						if (!(running.get() && fps > 0 && loop)) {
+							break;
+						}
+						raw = source.open();
+						current = raw;
+					}
 				} catch (InterruptedException e) {
 					Thread.currentThread().interrupt();
 				} catch (IOException e) {
@@ -205,6 +338,14 @@ public final class DesktopLivenessHarness {
 		@Override
 		public void detach() {
 			running.set(false);
+			InputStream c = current;
+			if (c != null) {
+				try {
+					c.close(); // unblocks a read on a live connection
+				} catch (IOException ignored) {
+					// nothing to do
+				}
+			}
 			Thread t = pump;
 			if (t != null) {
 				t.interrupt();
@@ -213,11 +354,7 @@ public final class DesktopLivenessHarness {
 
 		@Override
 		public String deviceId() {
-			return file != null ? "harness-mjpeg-file" : "harness-mjpeg-url";
-		}
-
-		private InputStream openStream() throws IOException {
-			return file != null ? new FileInputStream(file) : new URL(url).openStream();
+			return "harness-" + source.name();
 		}
 	}
 
@@ -226,6 +363,7 @@ public final class DesktopLivenessHarness {
 	public static void main(String[] args) throws Exception {
 		String url = null;
 		File file = null;
+		int mdsPort = 0;
 		double fps = 15;
 		boolean loop = false;
 		boolean retry = true;
@@ -239,6 +377,9 @@ public final class DesktopLivenessHarness {
 				break;
 			case "--file":
 				file = new File(args[++i]);
+				break;
+			case "--mds-port":
+				mdsPort = Integer.parseInt(args[++i]);
 				break;
 			case "--fps":
 				fps = Double.parseDouble(args[++i]);
@@ -263,8 +404,8 @@ public final class DesktopLivenessHarness {
 				System.exit(64);
 			}
 		}
-		if ((url == null) == (file == null)) {
-			System.err.println("give exactly one of --url or --file");
+		if ((url != null ? 1 : 0) + (file != null ? 1 : 0) + (mdsPort > 0 ? 1 : 0) != 1) {
+			System.err.println("give exactly one of --url, --file or --mds-port");
 			System.exit(64);
 		}
 
@@ -323,15 +464,18 @@ public final class DesktopLivenessHarness {
 			}
 		};
 
-		MjpegTap tap = new MjpegTap(url, file, fps, loop);
+		Source source = file != null ? fileSource(file) : mdsPort > 0 ? new MdsSource(mdsPort, "60000") : urlSource(url);
+		MjpegTap tap = new MjpegTap(source, file != null ? fps : 0, loop);
 		service.start(workflow, tap, listener);
 		boolean finished = done.await(timeoutSeconds, TimeUnit.SECONDS);
 		long frames = tap.framesRead;
 		service.cancel();
 		service.shutdown();
 
-		System.out.println("path: Desktop engine via local webcam harness, not inside the running client");
-		System.out.println("source: " + (file != null ? "recorded file" : "live url"));
+		System.out.println(mdsPort > 0
+				? "path: Desktop engine fed by an SBI STREAM request to a device service (harness), not inside the running client"
+				: "path: Desktop engine via local webcam harness, not inside the running client");
+		System.out.println("source: " + source.name());
 		System.out.println("workflow: " + workflow);
 		System.out.println("final_state: " + (finished && decision[0] != null ? decision[0] : "NO_DECISION_WITHIN_" + timeoutSeconds + "s"));
 		System.out.println("attempts: " + (failures.isEmpty() ? 1 : attempts[0]));

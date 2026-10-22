@@ -43,6 +43,22 @@ Options: `--workflow RESIDENT|OPERATOR|SUPERVISOR`, `--config signed.json` (a si
 `docs/liveness/demo-global-param.json`; without it the bundled default is used), `--no-retry`, `--timeout-seconds N`.
 On Windows replace `:` by `;` in the classpath and use `\` paths.
 
+## MockMDS (`--mds-port`)
+
+`--mds-port 4501` talks to an SBI device service the way the Desktop client does: `MOSIPDINFO` on `/info` to find the Face
+device, then the `STREAM` request (request body and method copied from `MosipDeviceSpecification_095_ProviderImpl.stream`
+for spec 0.9.x and `MosipDeviceSpecification_SBI_1_0_ProviderImpl.stream` for spec 1.x; same Apache `RequestBuilder` and
+entity). It reads the multipart JPEG stream that comes back.
+
+MockMDS from `mosip/mosip-mock-services` tag `v1.2.0.2` (what we did, from its README and `application.properties`):
+* `mvn clean install -Dmaven.test.skip=true -Dgpg.skip=true` in `MockMDS/` with JDK 11. With Maven 3.10 the tag's `pom.xml`
+  fails with "dependencies.dependency ... must be unique: com.squareup.okhttp:okhttp:jar" because `okhttp 2.7.5` is
+  declared twice; we deleted the second declaration in a scratch copy (nothing in this repository changed).
+* Run from `target/`: `java -cp "mock-mds-1.2.0.2.jar:lib/*" io.mosip.mock.sbi.test.TestMockSBI "mosip.mock.sbi.device.purpose=Registration" "mosip.mock.sbi.biometric.type=Biometric Device"` (the arguments of its `run.sh`).
+  It listens on port 4501, its own keystores are bundled, and no partner registration was needed for `MOSIPDINFO` or `STREAM`.
+* It answers with spec version `0.9.5` and three devices: Finger (`deviceId 2`), Face (`3`), Iris (`1`). The Face stream is one fixed JPEG
+  (`Biometric Devices/Face/Stream Image/0.jpeg`) sent as multipart (`--BoundaryString`, `Content-Length`) at about 29 frames per second.
+
 ## ffmpeg commands for the webcam: UNTESTED until we run them
 
 ffmpeg is a tool on the test PC, not a dependency of this repository. The two commands below have **not** been run with
