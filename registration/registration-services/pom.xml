@@ -606,6 +606,17 @@
 			<resource>
 				<directory>src/main/resources</directory>
 				<filtering>true</filtering>
+				<excludes>
+					<!-- Binary models must not be filtered (filtering re-encodes them and breaks their SHA-256). -->
+					<exclude>liveness/desktop-models/**</exclude>
+				</excludes>
+			</resource>
+			<resource>
+				<directory>src/main/resources</directory>
+				<filtering>false</filtering>
+				<includes>
+					<include>liveness/desktop-models/**</include>
+				</includes>
 			</resource>
 		</resources>
 
