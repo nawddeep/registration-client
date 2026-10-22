@@ -29,6 +29,8 @@ import io.mosip.registration.context.SessionContext;
 import io.mosip.registration.controller.BaseController;
 import io.mosip.registration.controller.GenericController;
 import io.mosip.registration.controller.device.Streamer;
+import io.mosip.registration.controller.liveness.FaceLivenessController;
+import io.mosip.registration.livenessmanager.model.Workflow;
 import io.mosip.registration.controller.reg.PacketHandlerController;
 import io.mosip.registration.controller.reg.RegistrationController;
 import io.mosip.registration.controller.reg.Validations;
@@ -213,6 +215,9 @@ public class AuthenticationController extends BaseController implements Initiali
 
 	@Autowired
 	private Streamer streamer;
+
+	@Autowired
+	private FaceLivenessController faceLivenessController;
 	
 	@Override
 	public void initialize(URL location, ResourceBundle resources) {
@@ -641,7 +646,13 @@ public class AuthenticationController extends BaseController implements Initiali
 						submitRegistration();
 					}
 				} else {
-					submitRegistration();
+					// Face liveness (supervisor): after the supervisor's existing authentication and before the
+					// approval goes through. Without a fresh pass nothing is submitted.
+					if (faceLivenessController.requirePass(Workflow.SUPERVISOR, "reviewerAuthentication")) {
+						submitRegistration();
+					} else {
+						generateAlert(RegistrationConstants.ERROR, faceLivenessController.requiredMessage());
+					}
 				}
 			}
 		} catch (RegBaseCheckedException exception) {
