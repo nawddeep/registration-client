@@ -36,6 +36,8 @@ import io.mosip.registration.util.healthcheck.RegistrationSystemPropertiesChecke
 public class AuditManagerSerivceImpl extends BaseService implements AuditManagerService {
 
 	private static final Logger LOGGER = AppConfig.getLogger(AuditManagerSerivceImpl.class);
+
+	private static final int MAX_DESCRIPTION_LENGTH = 2048;
 	
 	@Autowired
 	private AuditHandler<AuditRequestDto> auditHandler;
@@ -52,18 +54,31 @@ public class AuditManagerSerivceImpl extends BaseService implements AuditManager
 	 */
 	@Override
 	public void audit(AuditEvent auditEventEnum, Components appModuleEnum, String refId, String refIdType) {
+		audit(auditEventEnum, appModuleEnum, refId, refIdType, null);
+	}
+
+	/*
+	 * (non-Javadoc)
+	 * 
+	 * @see io.mosip.registration.audit.AuditManagerService#audit(AuditEvent,
+	 * Components, String, String, String)
+	 */
+	@Override
+	public void audit(AuditEvent auditEventEnum, Components appModuleEnum, String refId, String refIdType,
+			String description) {
 
 		// Getting Host IP Address and Name
 		String hostIP = "localhost";
 		String hostName = RegistrationSystemPropertiesChecker.getMachineId();
 		hostName = hostName != null ? hostName : String.valueOf(ApplicationContext.map().get(RegistrationConstants.DEFAULT_HOST_NAME));
 
-		if (auditEventEnum.getId().contains(RegistrationConstants.REGISTRATION_EVENTS)
+		// A caller-supplied description also means the caller owns refId / refIdType.
+		if (description == null && auditEventEnum.getId().contains(RegistrationConstants.REGISTRATION_EVENTS)
 				&& getRegistrationDTOFromSession() != null
 				&& getRegistrationDTOFromSession().getRegistrationId() != null) {
 			refId = getRegistrationDTOFromSession().getRegistrationId();
 			refIdType = AuditReferenceIdTypes.REGISTRATION_ID.getReferenceTypeId();
-		} else if (SessionContext.userId() != null && !SessionContext.userId().equals("NA")) {
+		} else if (description == null && SessionContext.userId() != null && !SessionContext.userId().equals("NA")) {
 			refId = SessionContext.userId();
 			refIdType = AuditReferenceIdTypes.USER_ID.getReferenceTypeId();
 		}
@@ -72,7 +87,8 @@ public class AuditManagerSerivceImpl extends BaseService implements AuditManager
 		auditRequestBuilder.setActionTimeStamp(DateUtils.getUTCCurrentDateTime())
 				.setApplicationId(String.valueOf(ApplicationContext.map().get(RegistrationConstants.APP_ID)))
 				.setApplicationName(String.valueOf(ApplicationContext.map().get(RegistrationConstants.APP_NAME)))
-				.setCreatedBy(SessionContext.userName()).setDescription(auditEventEnum.getDescription())
+				.setCreatedBy(SessionContext.userName())
+				.setDescription(description == null ? auditEventEnum.getDescription() : truncate(description))
 				.setEventId(auditEventEnum.getId()).setEventName(auditEventEnum.getName())
 				.setEventType(auditEventEnum.getType()).setHostIp(hostIP).setHostName(hostName).setId(refId)
 				.setIdType(refIdType).setModuleId(appModuleEnum.getId()).setModuleName(appModuleEnum.getName())
@@ -80,6 +96,12 @@ public class AuditManagerSerivceImpl extends BaseService implements AuditManager
 
 		auditHandler.addAudit(auditRequestBuilder.build());
 
+	}
+
+	/** Keeps the description within the 2048 characters of reg.app_audit_log.log_desc. */
+	private static String truncate(String description) {
+		return description.length() <= MAX_DESCRIPTION_LENGTH ? description
+				: description.substring(0, MAX_DESCRIPTION_LENGTH);
 	}
 
 	/*

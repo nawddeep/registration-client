@@ -14,6 +14,12 @@
 	<version>1.2.0.2</version>
 
 	<dependencies>
+		<!-- Face liveness core (plain Java 11), see registration-liveness-core -->
+		<dependency>
+			<groupId>io.mosip.registration</groupId>
+			<artifactId>registration-liveness-core</artifactId>
+			<version>${project.version}</version>
+		</dependency>
 		<!-- Lombok -->
 		<dependency>
 			<groupId>org.projectlombok</groupId>

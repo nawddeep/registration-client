@@ -316,7 +316,22 @@ public enum AuditEvent {
 	CLIENT_UPGRADE_JARS_DOWNLOADED("REG-UPG-001", USER_EVENT.getCode(), "CLIENT_UPGRADE_JARS_DOWNLOADED",
 			"Client Upgrade: Successfully downloaded all the upgrade jars"),
 	CLIENT_DB_UPGRADE_SCRIPTS("REG-UPG-001", USER_EVENT.getCode(), "CLIENT_DB_UPGRADE_SCRIPTS",
-			"Client Upgrade: SQL scripts execution success");
+			"Client Upgrade: SQL scripts execution success"),
+
+	// Face liveness / presentation attack detection. Per-record detail is passed as the audit description
+	// (see AuditManagerService#audit with a description); it never contains image data.
+	FACE_LIVENESS_SESSION("REG-LIV-001", USER_EVENT.getCode(), "FACE_LIVENESS_SESSION",
+			"Face liveness: session"),
+	FACE_LIVENESS_STATE("REG-LIV-002", SYSTEM_EVENT.getCode(), "FACE_LIVENESS_STATE",
+			"Face liveness: state"),
+	FACE_LIVENESS_DECISION("REG-LIV-003", SYSTEM_EVENT.getCode(), "FACE_LIVENESS_DECISION",
+			"Face liveness: decision"),
+	FACE_LIVENESS_CHALLENGE("REG-LIV-004", USER_EVENT.getCode(), "FACE_LIVENESS_CHALLENGE",
+			"Face liveness: challenge"),
+	FACE_LIVENESS_CONFIG("REG-LIV-005", SYSTEM_EVENT.getCode(), "FACE_LIVENESS_CONFIG",
+			"Face liveness: configuration"),
+	FACE_LIVENESS_GATE_BLOCKED("REG-LIV-006", SYSTEM_EVENT.getCode(), "FACE_LIVENESS_GATE_BLOCKED",
+			"Face liveness: capture blocked, liveness not passed");
 
 	/**
 	 * The constructor

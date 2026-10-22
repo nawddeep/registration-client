@@ -38,6 +38,29 @@ public interface AuditManagerService {
 	 */
 	void audit(AuditEvent auditEventEnum, Components appModuleEnum, String refId,
 			String refIdType);
+
+	/**
+	 * Audits an event with a caller-supplied description (for example per-record
+	 * detail). The description is truncated to 2048 characters (the size of
+	 * {@code log_desc}). When a description is supplied the caller also owns the
+	 * reference: {@code refId} and {@code refIdType} are stored as given instead of
+	 * being replaced by the logged-in user id / registration id. Passing a
+	 * {@code null} description behaves exactly like
+	 * {@link #audit(AuditEvent, Components, String, String)}.
+	 *
+	 * @param auditEventEnum
+	 *            the event
+	 * @param appModuleEnum
+	 *            the module
+	 * @param refId
+	 *            the ref id of the audit event
+	 * @param refIdType
+	 *            the ref id type of the audit event
+	 * @param description
+	 *            audit description, or {@code null} to use the event description
+	 */
+	void audit(AuditEvent auditEventEnum, Components appModuleEnum, String refId,
+			String refIdType, String description);
 	
 	/**
 	 * Delete Audit Logs
