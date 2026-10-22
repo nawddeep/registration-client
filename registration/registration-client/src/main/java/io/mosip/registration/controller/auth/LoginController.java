@@ -36,6 +36,8 @@ import io.mosip.registration.controller.BaseController;
 import io.mosip.registration.controller.ClientApplication;
 import io.mosip.registration.controller.FXUtils;
 import io.mosip.registration.controller.device.Streamer;
+import io.mosip.registration.controller.liveness.FaceLivenessController;
+import io.mosip.registration.livenessmanager.model.Workflow;
 import io.mosip.registration.controller.reg.HeaderController;
 import io.mosip.registration.controller.reg.Validations;
 import io.mosip.registration.dto.AuthenticationValidatorDTO;
@@ -198,6 +200,9 @@ public class LoginController extends BaseController implements Initializable {
 
 	@Autowired
 	private Streamer streamer;
+
+	@Autowired
+	private FaceLivenessController faceLivenessController;
 
 	@Autowired
 	private BioService bioService;
@@ -852,6 +857,15 @@ public class LoginController extends BaseController implements Initializable {
 		} else {
 
 			if (null != SessionContext.userContext().getUserId()) {
+
+				// Face liveness (operator): after the existing authentication succeeded and before Home loads.
+				// Without a fresh pass the session is closed and the login screen is shown again.
+				if (!faceLivenessController.requirePass(Workflow.OPERATOR, userId.getText())) {
+					generateAlert(RegistrationConstants.ERROR, faceLivenessController.requiredMessage());
+					SessionContext.destroySession();
+					loadInitialScreen(ClientApplication.getPrimaryStage());
+					return;
+				}
 
 				auditFactory.audit(AuditEvent.NAV_HOME, Components.LOGIN, userId.getText(),
 						AuditReferenceIdTypes.USER_ID.getReferenceTypeId());
