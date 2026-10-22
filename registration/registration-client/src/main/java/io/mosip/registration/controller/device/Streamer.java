@@ -4,6 +4,7 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.StringWriter;
+import java.util.function.Consumer;
 
 import org.springframework.stereotype.Component;
 
@@ -45,6 +46,29 @@ public class Streamer {
 
 	public InputStream getUrlStream() {
 		return urlStream;
+	}
+
+	/**
+	 * Optional tap on the decoded stream: receives each JPEG frame exactly as read from the device (used by face
+	 * liveness, so no second stream is opened). A listener that throws is removed and never affects the preview.
+	 */
+	private volatile Consumer<byte[]> frameListener;
+
+	public void setFrameListener(Consumer<byte[]> frameListener) {
+		this.frameListener = frameListener;
+	}
+
+	private void publishFrame(byte[] jpeg) {
+		Consumer<byte[]> listener = frameListener;
+		if (listener == null) {
+			return;
+		}
+		try {
+			listener.accept(jpeg);
+		} catch (RuntimeException e) {
+			frameListener = null;
+			LOGGER.error("Stream frame listener failed and was removed", e);
+		}
 	}
 
 	private boolean isRunning = true;
@@ -98,6 +122,7 @@ public class Streamer {
 				while (null != urlStream) {
 					try {
 						imageBytes = retrieveNextImage(urlStream);
+						publishFrame(imageBytes);
 						ByteArrayInputStream imageStream = new ByteArrayInputStream(imageBytes);
 						Image img = new Image(imageStream);
 						streamImage.setImage(img);
