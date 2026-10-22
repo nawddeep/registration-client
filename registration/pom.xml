@@ -167,6 +167,7 @@
 	<modules>
 		<module>registration-api</module>
 		<module>registration-api-stub-impl</module>
+		<module>registration-liveness-core</module>
 		<module>registration-services</module>
 		<module>registration-client</module>
 		<!--<module>ref-impl/ref-document-scanner</module>
