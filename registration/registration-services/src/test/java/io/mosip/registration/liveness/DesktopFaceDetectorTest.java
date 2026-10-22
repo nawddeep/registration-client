@@ -172,6 +172,49 @@ public class DesktopFaceDetectorTest {
 		assertTrue("p95 " + ms[(int) (n * 0.95) - 1] + " ms", ms[(int) (n * 0.95) - 1] < 1000);
 	}
 
+	@Test
+	public void theWholeEngineKeepsUpAt640x480() throws Exception {
+		// A camera-sized frame: the test photo scaled onto a 640x480 canvas.
+		BufferedImage canvas = canvas(640, 480, new Color(70, 70, 70));
+		Graphics2D g = canvas.createGraphics();
+		g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+		int h = 440;
+		int w = photo.getWidth() * h / photo.getHeight();
+		g.drawImage(photo, (640 - w) / 2, 20, w, h, null);
+		g.dispose();
+		FaceFrame frame = frameOf(canvas);
+		assertEquals(640, frame.getWidth());
+
+		io.mosip.registration.livenessmanager.engine.DefaultLivenessEngine engine = new io.mosip.registration.livenessmanager.engine.DefaultLivenessEngine(
+				detector, DesktopLivenessService.padModel(DesktopModelStore.bundled(tmp.newFolder("engine"))),
+				new io.mosip.registration.livenessmanager.quality.LumaQualityAnalyzer());
+		engine.initialize();
+		io.mosip.registration.livenessmanager.model.LivenessPolicy policy = new io.mosip.registration.livenessmanager.model.LivenessPolicy();
+		for (int i = 0; i < 5; i++) {
+			engine.analyze(frame, policy, true);
+		}
+		int n = 40;
+		long[] withPad = new long[n];
+		long[] noPad = new long[n];
+		for (int i = 0; i < n; i++) {
+			long t0 = System.nanoTime();
+			engine.analyze(frame, policy, true);
+			withPad[i] = (System.nanoTime() - t0) / 1_000_000;
+			t0 = System.nanoTime();
+			engine.analyze(frame, policy, false);
+			noPad[i] = (System.nanoTime() - t0) / 1_000_000;
+		}
+		Arrays.sort(withPad);
+		Arrays.sort(noPad);
+		System.out.println("DesktopLivenessEngine timing on " + System.getProperty("os.name") + " "
+				+ System.getProperty("os.arch") + " (" + Runtime.getRuntime().availableProcessors() + " cores, JDK "
+				+ System.getProperty("java.version") + "), 640x480: with PAD mean=" + (Arrays.stream(withPad).sum() / n)
+				+ " ms p95=" + withPad[(int) (n * 0.95) - 1] + " ms; without PAD mean="
+				+ (Arrays.stream(noPad).sum() / n) + " ms p95=" + noPad[(int) (n * 0.95) - 1] + " ms");
+		assertTrue("p95 " + withPad[(int) (n * 0.95) - 1] + " ms", withPad[(int) (n * 0.95) - 1] < 1500);
+		engine.close();
+	}
+
 	// ---- integrity --------------------------------------------------------------------------------------------
 
 	@Test
